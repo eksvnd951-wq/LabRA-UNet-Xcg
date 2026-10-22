@@ -1,0 +1,11 @@
+torch
+opencv-python
+albumentations
+numpy
+pandas
+scikit-learn
+matplotlib
+seaborn
+tqdm
+tensorboard
+roboflow

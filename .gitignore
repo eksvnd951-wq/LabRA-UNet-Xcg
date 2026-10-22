@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Google Colab runtime files
+.config/
+sample_data/
+
+# datasets, checkpoints and run outputs (weights are published as release assets)
+Bacteria-*/
+runs/
+*.pth
+*.pt
+*_results/
+analysis_results/
+
