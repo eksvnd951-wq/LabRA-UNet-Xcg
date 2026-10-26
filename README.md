@@ -1,36 +1,51 @@
 # LabRA-UNet-Xcg
 
-Lesion segmentation code and trained weights for the manuscript
+LabRA-UNet code and trained weights for the manuscript
 
 > **Deep Learning-Based Lesion Phenotyping via LabRA-UNet for Genetic Dissection of Soybean Resistance to *Xanthomonas citri* pv. *glycines***
 > (submitted to *Plant Phenomics*)
 
-The network segments soybean leaf photos into background, bacterial pustule (`BP`) and `SP` lesions. It then counts the lesions of each class and measures their area. The scripts in [`colab/`](colab) are the ones used on Google Colab to train the released model (2026-02-23) and to extract the lesion phenotypes.
+LabRA-UNet segments soybean leaf photos into background, discrete bacterial pustule (`BP`) and lesion-coalescence (`LC`) pixels. The lesion masks are then turned into lesion traits by connected-component analysis and a density-based spatial merge.
+
+## Model
+
+- **Input:** the RGB photo is converted to CIELAB (L\*, a\*, b\*), and the three channels are stacked as the network input (256 × 256).
+- **Network:** a 4-level U-Net encoder–decoder (64–1024 channels, 32.8 M parameters).
+  - **Residual blocks:** every encoder stage, the bottleneck and every decoder stage is a residual block (two 3 × 3 conv–BN layers plus an identity or 1 × 1 conv shortcut).
+  - **Attention gates:** every skip connection passes through an attention gate. The encoder features x and the decoder gating signal g are projected with 1 × 1 convolutions and added. ReLU, a 1 × 1 convolution and a sigmoid then give coefficients α ∈ [0, 1], which multiply x. The refined features are concatenated with the decoder features.
+- **Loss:** focal loss (α 0.25, γ 2) + Tversky loss (α 0.3, β 0.7).
 
 ## Files
 
 | File | What it does |
 |---|---|
-| `colab/prepare_data.py` | Downloads the dataset from Roboflow (YOLOv8 polygon export) and converts the polygons into class-index masks in `<split>/masks/`: 0 = background, 1 = BP, 2 = SP. |
-| `colab/dataset.py` | `LeafDataset`. Reads each image and converts BGR to CIELAB (`cv2.COLOR_BGR2LAB`). For training, images that contain SP are oversampled ×4. |
-| `colab/models.py` | `AttentionUNet`: 4-level U-Net with double 3 × 3 conv blocks (64–1024 channels) and transposed-conv upsampling. The class defines attention blocks (`att1`–`att4`), but `forward()` does not call them. 31.4 M parameters. |
-| `colab/losses.py` | `ComboLoss`: focal loss (α 0.25, γ 2) + Tversky loss (α 0.3, β 0.7). |
-| `colab/metrics.py` | Per-class pixel IoU, F1, precision, recall and AP, used to monitor training. |
-| `colab/train.py` | Trains at 512 × 512 with AdamW (lr 3e-4). Augmentation: flips, RandomRotate90, GridDistortion, ElasticTransform. Normalization: (x − 0.5)/0.5. Saves `runs/train/expN/best_model.pth` (best 0.6 mIoU + 0.4 mAP on the training batches), `final_metrics.csv` and TensorBoard logs. |
-| `colab/inference_phenotyping.py` | Runs a checkpoint on a folder of photos. Writes the per-photo BP/SP lesion count and area (`analysis_report.csv`), overlays, and raw masks to `runs/inference/expN/`. Lesions are connected components after a 3 × 3 closing; components under 10 px are dropped. |
-| `colab/analysis_utils.py` | Plotting helpers (training curves). |
+| `labra_unet/models.py` | `LabRAUNet`, `ResidualBlock`, `AttentionGate` |
+| `labra_unet/losses.py` | Focal–Tversky loss |
+| `labra_unet/dataset.py` | Reads images, converts them to CIELAB, and pairs them with class-index masks (0 background, 1 BP, 2 LC) |
+| `labra_unet/prepare_data.py` | Downloads a Roboflow dataset version (YOLOv8 polygons) and writes the class-index masks |
+| `labra_unet/make_split.py` | Splits the images into train / valid / test (7:2:1) by source photo |
+| `labra_unet/train.py` | Training with validation-based checkpoint selection and early stopping |
+| `labra_unet/inference_phenotyping.py` | Segments a folder of photos and writes the lesion traits per photo |
+| `data/split.csv` | Split of every image file used to train the released model |
 
 ## Data
 
-Roboflow Universe, workspace `park-yuhyeon`, project `bacteria-dzvwf`, version 35 (CC BY 4.0). Images are resized to 640 × 640, and the labels are polygons with two classes, `BP` and `SP`. The images are not stored in this repository.
+The photos are from Roboflow Universe, workspace `park-yuhyeon`, project `bacteria-dzvwf` (CC BY 4.0, 640 × 640). The images are not stored in this repository.
 
-| Split | Files | Source photos |
+The training data combine the train splits of versions 32, 33, 34 and 35 in the folder of version 35. Files whose names already exist are renamed `Bacteria-<version>_<name>`. The merged folder holds 207 source photos:
+
+- **192 photos from the train splits:** 12 files each, namely the un-augmented image (identical in all four versions) and 8 augmented copies.
+- **15 photos from the valid and test splits of version 35:** one file each.
+
+The 4 test photos without annotations are dropped. `make_split.py` (seed 0) then splits the remaining 203 photos 7:2:1 by photo:
+
+| Split | Photos | Files |
 |---|---|---|
-| train | 2,304 | 192 (the train splits of versions 32–35 merged: 4 Roboflow exports × 3 augmented copies per photo) |
-| valid | 10 | 10 |
-| test | 5 | 5 |
+| train | 142 | 1,627 (all files of each photo) |
+| valid | 41 | 41 (un-augmented image only) |
+| test | 20 | 20 (un-augmented image only) |
 
-No source photo appears in more than one split.
+`data/split.csv` lists every file.
 
 ## Setup
 
@@ -38,43 +53,59 @@ No source photo appears in more than one split.
 pip install -r requirements.txt
 ```
 
-Training needs a CUDA GPU. Inference also runs on a CPU.
+Training needs a CUDA GPU. Inference also runs on a CPU. Run the scripts from inside `labra_unet/`.
 
-## Usage
-
-Run the scripts from inside `colab/`, because they import each other.
+## Training
 
 ```bash
-cd colab
-
-# 1. download the dataset and write the masks (needs your own Roboflow API key)
-python prepare_data.py --api_key YOUR_ROBOFLOW_API_KEY --workspace park-yuhyeon --project bacteria-dzvwf --version 35
-
-# 2. train (the released model: 200 epochs)
-python train.py --data Bacteria-35 --epochs 200
-
-# 3. lesion counts and areas for a folder of photos
-python inference_phenotyping.py --weights final_v35_exp2_best_model.pth --source path/to/photos
+python make_split.py --src Bacteria-35 --out Bacteria-35-split
+python train.py --data Bacteria-35-split
 ```
 
-The phenotypes in the manuscript were extracted with step 3 as shown, without `--auto-merge`. The optional `--auto-merge` (`--merge-dist` 30 px, `--min-cluster` 500 px) closes the BP mask with an elliptical kernel and relabels clusters larger than the threshold as SP.
+`train.py` defaults:
+
+- **Input:** 256 × 256.
+- **Optimizer:** AdamW (learning rate 0.001, weight decay 0.01) with cosine annealing over 200 epochs; batch size 16; mixed precision.
+- **Augmentation:** horizontal/vertical flips, 90° rotations, grid distortion and elastic deformation. Training images that contain LC are oversampled ×4.
+- **Checkpoint selection and stopping:** at most 200 epochs. After every epoch the model is evaluated on the validation set, and the checkpoint with the highest validation Dice (mean of BP and LC) is kept. Training stops after 30 epochs without improvement.
+
+The output goes to `runs/train/expN/`: `best_model.pth`, `log.csv`, `training_curves.png` and `train_info.json`.
+
+The released model was trained on an NVIDIA GeForce RTX 5070 Ti Laptop GPU (12 GB). Training stopped after 131 epochs (2.4 h). The best validation Dice was 0.586, at epoch 101.
+
+## Lesion traits
+
+```bash
+python inference_phenotyping.py --weights labra_unet_best.pth --source path/to/photos
+```
+
+The class probabilities are resized (bilinear) back to the photo's resolution, and the mask is taken from them. Connected components are then taken from the lesion pixels (BP and LC):
+
+| Column | Definition |
+|---|---|
+| `N` | Lesion count: components of at least `--min-area` px (default 100 px) |
+| `CL` | Combined lesion-component count after the density-based spatial merge. The lesion mask is closed with an elliptical structuring element of `--merge-dist` px (default 30 px), and its components of at least `--min-area` px are counted. |
+| `BP_count`, `LC_count` | Merged components of at most / more than `--tau` px (default 500 px) |
+| `BP_area`, `LC_area`, `lesion_area` | Lesion pixels in BP components, in LC components, and in total |
+
+The output goes to `runs/inference/expN/`: `analysis_report.csv`, overlays (BP red, LC blue) and the predicted class masks.
 
 ## Weights
 
-The released checkpoint is attached to the GitHub release [`weights-colab`](../../releases/tag/weights-colab):
+The trained model is attached to the GitHub release [`labra-unet-v1`](../../releases/tag/labra-unet-v1):
 
-| File | Source | SHA-256 |
-|---|---|---|
-| `final_v35_exp2_best_model.pth` | Colab run of 2026-02-23, `runs/train/exp2/best_model.pth` (200 epochs, 20.7 h) | `a77854e3686831a08d4f67e8a1307fa13f211feda45ff0e7f8f5169f29b96bd6` |
+| File | SHA-256 |
+|---|---|
+| `labra_unet_best.pth` | `8bbf96a429fe26785c1cc03a7aac1d9d38ad77deb59099c1ce5fd3e7fe651279` |
 
 ```python
 import torch
-from models import AttentionUNet
+from models import LabRAUNet
 
-model = AttentionUNet(n_cls=3)
-model.load_state_dict(torch.load("final_v35_exp2_best_model.pth", map_location="cpu"))
+model = LabRAUNet(n_cls=3)
+model.load_state_dict(torch.load("labra_unet_best.pth", map_location="cpu"))
 model.eval()
-# input: BGR photo -> cv2.COLOR_BGR2LAB -> 512 x 512 -> (x / 255 - 0.5) / 0.5, channels first
+# input: BGR photo -> cv2.COLOR_BGR2LAB -> 256 x 256 -> (x / 255 - 0.5) / 0.5, channels first
 ```
 
 ## Citation
