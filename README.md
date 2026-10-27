@@ -92,9 +92,11 @@ The output goes to `runs/inference/expN/`: `analysis_report.csv`, overlays (BP r
 
 ## Weights
 
-This version is still being trained. Its weights will be attached to the GitHub release `labra-unet-v2`.
+The trained model is attached to the GitHub release [`labra-unet-v2`](../../releases/tag/labra-unet-v2):
 
-The release [`labra-unet-v1`](../../releases/tag/labra-unet-v1) holds an earlier version with an attention gate at all four levels. It matches the code at tag `labra-unet-v1`, not the current code.
+| File | SHA-256 |
+|---|---|
+| `labra_unet_best.pth` | `c8c5c4e90b8f06df36479c8bac0ccb5f4ff6d2197387303ea2611e55410aa9f6` |
 
 ```python
 import torch
@@ -105,6 +107,8 @@ model.load_state_dict(torch.load("labra_unet_best.pth", map_location="cpu"))
 model.eval()
 # input: BGR photo -> cv2.COLOR_BGR2LAB -> 256 x 256 -> (x / 255 - 0.5) / 0.5, channels first
 ```
+
+The release [`labra-unet-v1`](../../releases/tag/labra-unet-v1) holds an earlier version with an attention gate at all four levels. It matches the code at tag `labra-unet-v1`, not the current code.
 
 ## Citation
 
