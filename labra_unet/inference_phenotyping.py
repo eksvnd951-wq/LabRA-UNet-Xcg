@@ -7,9 +7,10 @@ the class probabilities are resized back to the photo's resolution and the mask 
 from them. The lesion pixels (BP and LC classes) are analysed with connected components at
 that resolution:
   N         lesion count: components of at least --min-area px;
-  CL        combined lesion-component count after the density-based spatial merge: the
-            lesion mask is closed with an elliptical structuring element of --merge-dist px
-            and its components of at least --min-area px are counted;
+  CL        combined lesion-component count after the density-based spatial merge: the BP
+            pixels are closed with an elliptical structuring element of --merge-dist px, the
+            LC pixels are added and holes are filled; components of at least --min-area px
+            are counted;
   BP / LC   merged components of at most / more than --tau px.
 Writes analysis_report.csv, overlays (BP red, LC blue) and the predicted class masks
 (0 background, 1 BP, 2 LC) to runs/inference/expN/.
@@ -41,15 +42,24 @@ def predict(model, img_bgr, imgsz, dev):
     return prob.argmax(0).cpu().numpy().astype(np.uint8), prob.cpu().numpy()
 
 
+def fill_holes(binary):
+    """Fills the background regions that are not connected to the image border."""
+    outside = np.pad(binary, 1)
+    cv2.floodFill(outside, None, (0, 0), 1)
+    return binary | (1 - outside[1:-1, 1:-1])
+
+
 def phenotype(mask, min_area=100, tau=500, merge_dist=30):
     """Lesion traits of one class-index mask. Returns the traits and a per-pixel map of the
     merged-component class (1 BP, 2 LC, 0 background or component below min_area)."""
     lesion = (mask > 0).astype(np.uint8)
     _, _, st, _ = cv2.connectedComponentsWithStats(lesion)
     n_lesions = int((st[1:, cv2.CC_STAT_AREA] >= min_area).sum())
+    # density-based spatial merge: closing of the BP mask, then the LC pixels are added and holes filled
+    # (OR-ing the lesion pixels back keeps them all: an even-sized kernel shifts OpenCV's closing by 1 px)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (merge_dist, merge_dist))
-    closed = cv2.morphologyEx(lesion, cv2.MORPH_CLOSE, kernel)
-    n, lbl, st, _ = cv2.connectedComponentsWithStats(closed)
+    merged = cv2.morphologyEx((mask == 1).astype(np.uint8), cv2.MORPH_CLOSE, kernel) | lesion
+    n, lbl, st, _ = cv2.connectedComponentsWithStats(fill_holes(merged))
     area = st[:, cv2.CC_STAT_AREA]
     cls = np.zeros(n, np.uint8)
     cls[(area >= min_area) & (area <= tau)] = 1

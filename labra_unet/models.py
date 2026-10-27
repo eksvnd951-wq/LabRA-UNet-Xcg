@@ -1,9 +1,11 @@
 """
-LabRA-UNet: U-Net for CIELAB leaf images with residual blocks and attention gates.
+LabRA-UNet: U-Net for CIELAB leaf images with residual blocks and attention gates
+(manuscript Section 2.7, Figs. 2 and S1).
 
 Every encoder stage, the bottleneck and every decoder stage is a residual block.
-Each skip connection passes through an attention gate before it is concatenated
-with the upsampled decoder features.
+The three upper levels (64, 128 and 256 channels) have skip connections, and each
+passes through an attention gate before it is concatenated with the upsampled
+decoder features. The deepest level (512 channels) has no skip connection.
 """
 import torch
 import torch.nn as nn
@@ -44,7 +46,12 @@ class AttentionGate(nn.Module):
 
 
 class LabRAUNet(nn.Module):
-    """Input: 3-channel CIELAB image. Output: logits for background, BP and LC."""
+    """Input: 3-channel CIELAB image. Output: logits for background, BP and LC.
+
+    Encoder: four residual blocks (64-512 channels) with 2 x 2 max pooling, then a residual
+    bottleneck (1024). Decoder: four up-blocks (512-64), each a 2 x 2 transposed convolution
+    and a residual block; the upper three also receive the gated encoder features of their level.
+    """
 
     def __init__(self, n_cls=3, widths=(64, 128, 256, 512, 1024)):
         super().__init__()
@@ -55,8 +62,8 @@ class LabRAUNet(nn.Module):
         self.bottleneck = ResidualBlock(w[3], w[4])
         levels = (3, 2, 1, 0)
         self.up = nn.ModuleList([nn.ConvTranspose2d(w[k + 1], w[k], 2, 2) for k in levels])
-        self.att = nn.ModuleList([AttentionGate(w[k], w[k], w[k] // 2) for k in levels])
-        self.dec = nn.ModuleList([ResidualBlock(2 * w[k], w[k]) for k in levels])
+        self.att = nn.ModuleList([AttentionGate(w[k], w[k], w[k] // 2) for k in levels[1:]])
+        self.dec = nn.ModuleList([ResidualBlock(w[k] if k == 3 else 2 * w[k], w[k]) for k in levels])
         self.head = nn.Conv2d(w[0], n_cls, 1)
 
     def forward(self, x):
@@ -64,8 +71,8 @@ class LabRAUNet(nn.Module):
         for i, block in enumerate(self.enc):
             x = block(x if i == 0 else self.pool(x))
             skips.append(x)
-        d = self.bottleneck(self.pool(x))
-        for up, att, dec, skip in zip(self.up, self.att, self.dec, reversed(skips)):
+        d = self.dec[0](self.up[0](self.bottleneck(self.pool(x))))   # 512 level: no skip connection
+        for up, att, dec, skip in zip(self.up[1:], self.att, self.dec[1:], reversed(skips[:3])):
             g = up(d)                                    # decoder gating signal
             d = dec(torch.cat((att(g, skip), g), 1))     # refined encoder features + decoder features
         return self.head(d)

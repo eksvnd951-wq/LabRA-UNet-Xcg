@@ -10,9 +10,9 @@ LabRA-UNet segments soybean leaf photos into background, discrete bacterial pust
 ## Model
 
 - **Input:** the RGB photo is converted to CIELAB (L\*, a\*, b\*), and the three channels are stacked as the network input (256 × 256).
-- **Network:** a 4-level U-Net encoder–decoder (64–1024 channels, 32.8 M parameters).
+- **Network:** a 4-level U-Net encoder–decoder (64–1024 channels, 29.6 M parameters), laid out as in Fig. S1 of the manuscript.
   - **Residual blocks:** every encoder stage, the bottleneck and every decoder stage is a residual block (two 3 × 3 conv–BN layers plus an identity or 1 × 1 conv shortcut).
-  - **Attention gates:** every skip connection passes through an attention gate. The encoder features x and the decoder gating signal g are projected with 1 × 1 convolutions and added. ReLU, a 1 × 1 convolution and a sigmoid then give coefficients α ∈ [0, 1], which multiply x. The refined features are concatenated with the decoder features.
+  - **Attention gates:** the three upper levels (64, 128 and 256 channels) have skip connections, and each passes through an attention gate. The deepest level (512 channels) has no skip connection. In each gate, the encoder features x and the decoder gating signal g are projected with 1 × 1 convolutions and added. ReLU, a 1 × 1 convolution and a sigmoid then give coefficients α ∈ [0, 1], which multiply x. The refined features are concatenated with the decoder features.
 - **Loss:** focal loss (α 0.25, γ 2) + Tversky loss (α 0.3, β 0.7).
 
 ## Files
@@ -65,13 +65,11 @@ python train.py --data Bacteria-35-split
 `train.py` defaults:
 
 - **Input:** 256 × 256.
-- **Optimizer:** AdamW (learning rate 0.001, weight decay 0.01) with cosine annealing over 200 epochs; batch size 16; mixed precision.
+- **Optimizer:** AdamW (learning rate 0.001, weight decay 0.01) with cosine annealing over 200 epochs; batch size 16; mixed precision (bfloat16 where the GPU supports it, otherwise float16).
 - **Augmentation:** horizontal/vertical flips, 90° rotations, grid distortion and elastic deformation. Training images that contain LC are oversampled ×4.
 - **Checkpoint selection and stopping:** at most 200 epochs. After every epoch the model is evaluated on the validation set, and the checkpoint with the highest validation Dice (mean of BP and LC) is kept. Training stops after 30 epochs without improvement.
 
 The output goes to `runs/train/expN/`: `best_model.pth`, `log.csv`, `training_curves.png` and `train_info.json`.
-
-The released model was trained on an NVIDIA GeForce RTX 5070 Ti Laptop GPU (12 GB). Training stopped after 131 epochs (2.4 h). The best validation Dice was 0.586, at epoch 101.
 
 ## Lesion traits
 
@@ -84,19 +82,19 @@ The class probabilities are resized (bilinear) back to the photo's resolution, a
 | Column | Definition |
 |---|---|
 | `N` | Lesion count: components of at least `--min-area` px (default 100 px) |
-| `CL` | Combined lesion-component count after the density-based spatial merge. The lesion mask is closed with an elliptical structuring element of `--merge-dist` px (default 30 px), and its components of at least `--min-area` px are counted. |
+| `CL` | Combined lesion-component count after the density-based spatial merge. The BP pixels are closed with an elliptical structuring element of `--merge-dist` px (default 30 px), the LC pixels are added and holes are filled. Components of at least `--min-area` px are counted. |
 | `BP_count`, `LC_count` | Merged components of at most / more than `--tau` px (default 500 px) |
 | `BP_area`, `LC_area`, `lesion_area` | Lesion pixels in BP components, in LC components, and in total |
+
+Near-view photos give the traits N and CLN of the manuscript (`N`, `CL`). Wide-view photos were processed by progressive learning (manuscript Figs. 3 and S2): the target leaf was first localized and cropped, and the leaf crops were then segmented in the same way. `N` and `CL` of the crops give W and CLW. The leaf-cropping stage is not part of this repository.
 
 The output goes to `runs/inference/expN/`: `analysis_report.csv`, overlays (BP red, LC blue) and the predicted class masks.
 
 ## Weights
 
-The trained model is attached to the GitHub release [`labra-unet-v1`](../../releases/tag/labra-unet-v1):
+This version is still being trained. Its weights will be attached to the GitHub release `labra-unet-v2`.
 
-| File | SHA-256 |
-|---|---|
-| `labra_unet_best.pth` | `8bbf96a429fe26785c1cc03a7aac1d9d38ad77deb59099c1ce5fd3e7fe651279` |
+The release [`labra-unet-v1`](../../releases/tag/labra-unet-v1) holds an earlier version with an attention gate at all four levels. It matches the code at tag `labra-unet-v1`, not the current code.
 
 ```python
 import torch
